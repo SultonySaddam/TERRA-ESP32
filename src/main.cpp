@@ -11,60 +11,59 @@
 
 #define START_LAMPU 8
 #define FINISH_LAMPU 19
-#define START_MAKAN_JAM 12
+#define START_MAKAN_JAM 8
 #define START_MAKAN_JAM2 16
-#define START_MAKAN_MENIT 3
+#define START_MAKAN_MENIT 0
 #define START_MAKAN_DETIK_AWAL 1
-#define START_MAKAN_DETIK_AKHIR 3
+#define START_MAKAN_DETIK_AKHIR 2
 #define LED 2
 #define SERVO_PIN 18
-const int relay4 = 19;
 
+// Relay
+const int relay4 = 19;
 // MQTT
 const int mqttPort = 1883;
-const char* mqttUser = "";
-const char* mqttPassword = "";
-const char* TopicSchedule = "TERRARIUM/SCHEDULE";
-const char* TopicStatusPair = "TERRARIUM/STATUS";
-const char* TopicPublishToServer = "TERRARIUM/PUBLISH";
-const char* mqttServer = "test.mosquitto.org";
-
-String BASE_URL = "http://192.168.226.128:8000";
-
-// LCD DISPLAY
-int displayCondition = 1;
-// 1 data makan
-// 2 data air
-// 3 suhu
-// 4 kelembaban
-// 5 data Lampu
-
+const char* mqttUser = "skripsimqtt";
+const char* mqttPassword = "@YZ7rqrLIDJ^!Qrz";
+const char* mqttServer = "103.139.192.253";
+// const char* mqttServer = "broker.mqtt-dashboard.com";
+// RTC
 char daysOfTheWeek[7][12] = {"Minggu", "Senin", "Selasa", "Rabu",
                              "Kamis",  "Jumat", "Sabtu"};
+char msg[75];
 
+// LCD DISPLAY
+// 1 data makan, 2 data air, 3 suhu, 4 kelembaban, 5 data Lampu
+int displayCondition = 1;
+// RTC
 int tanggal, bulan, tahun, jam, menit, detik;
-
 // variable millis
+int displayinterval = 5000;
+int lamaBuka = 2000;
+unsigned long lastmsg = 0;
 unsigned long makanTimeStamp = 0;
 unsigned long displaytimestamp = 0;
-int displayinterval = 5000;
-int lamaBuka = 5000;
 
 // Save Jam to EEPROM
-unsigned long timeInSeconds = jam * 3600 + menit * 60 + detik;
-
-String waktu = String(timeInSeconds);
+// unsigned long timeInSeconds = jam * 3600 + menit * 60 + detik;
+String BASE_URL = "http://103.139.192.253:8100";
+// String BASE_URL = "http://192.168.1.10:8000";
+String mode;
+String Mode;
+String jam1;
+String jam2;
 String dataIN;
 String dataId;
 String dataPin;
 String isLampAvailable;
 String hari;
 String StatusAlat;
+// String waktu = String(timeInSeconds);
 boolean isMakan = false;
+// Variabel Khusus
 RTC_DS3231 rtc;
 Servo servoMotor;
 LiquidCrystal_I2C lcd(0x27, 20, 4);
-
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 
@@ -156,7 +155,8 @@ void lampu() {  // fix
   menit = now.minute(), DEC;
   detik = now.second(), DEC;
 
-  if ((jam >= START_LAMPU) && (jam < FINISH_LAMPU))  // nyala  jam>=8 jam < 19
+  if ((jam >= START_LAMPU) && (jam < FINISH_LAMPU))
+  // nyala  jam>=8 jam < 19
   {
     digitalWrite(relay4, HIGH);
     Serial.println("Lampu nyala, ");
@@ -170,7 +170,6 @@ void lampu() {  // fix
 void pakan() {
   String FORMAT_JAM = String(jam) + ":" + String(menit);
   Serial.println(FORMAT_JAM);
-  String mode = readFromEEPROM(1);
   if (mode == "AUTO" && (jam == START_MAKAN_JAM) &&
       (menit == START_MAKAN_MENIT) && (detik >= START_MAKAN_DETIK_AWAL) &&
       (detik < START_MAKAN_DETIK_AKHIR)) {
@@ -189,7 +188,6 @@ void pakan() {
   }
 
   if (mode == "MANUAL") {
-    String jam1 = readFromEEPROM(10);
     if (jam1 == FORMAT_JAM && (detik >= START_MAKAN_DETIK_AWAL) &&
         (detik < START_MAKAN_DETIK_AKHIR)) {
       isMakan = true;
@@ -205,12 +203,11 @@ void pakan() {
       Serial.println("Buka");
       servoMotor.write(0);
     }
-
-    if (isMakan && millis() > makanTimeStamp + lamaBuka) {
-      Serial.println("Tutup");
-      servoMotor.write(90);
-      isMakan = false;
-    }
+  }
+  if (isMakan && millis() > makanTimeStamp + lamaBuka) {
+    Serial.println("Tutup");
+    servoMotor.write(100);
+    isMakan = false;
   }
 }
 
@@ -223,7 +220,6 @@ void LCD() {
   String wateravailable = stringSpliter(payload, '#', 3);
   String temperature = stringSpliter(payload, '#', 0);
   String humidity = stringSpliter(payload, '#', 1);
-  String StatusAlat = readFromEEPROM(80);
   if (StatusAlat == "true") {
     switch (displayCondition) {
       case 1:
@@ -259,11 +255,23 @@ void LCD() {
 
       case 4:
         lcd.setCursor(0, 0);
-        lcd.print("ID ALAT" + dataId);
+        lcd.print("ID ALAT: " + dataId);
         lcd.setCursor(0, 1);
         lcd.print("HUM:" + humidity + "%");
         break;
       default:
+        break;
+
+      case 5:
+        lcd.setCursor(0, 0);
+        lcd.print("ID ALAT: " + dataId);
+        lcd.setCursor(0, 1);
+        if (isLampAvailable == "true") {
+          lcd.print("LAMPU NYALA");
+        }
+        if (isLampAvailable == "false") {
+          lcd.print("LAMPU MATI");
+        }
         break;
     }
     if (millis() - displaytimestamp > displayinterval) {
@@ -271,14 +279,15 @@ void LCD() {
       displaytimestamp = millis();
       displayCondition++;
 
-      if (displayCondition > 4) {
+      if (displayCondition > 5) {
         displayCondition = 1;
       }
     }
   }
+
   if (StatusAlat == "false") {
     lcd.setCursor(0, 0);
-    lcd.print("ID ALAT" + dataId);
+    lcd.print("ID ALAT: " + dataId);
     lcd.setCursor(0, 1);
     lcd.print("PIN ALAT: " + dataPin);
   }
@@ -286,17 +295,15 @@ void LCD() {
 
 void setup() {
   Serial.begin(9600);
-  Serial2.begin(9600, SERIAL_8N1, 16, 17);
+  Serial2.begin(9600, SERIAL_8N1, 16, 17);  // RX,TX
   EEPROM.begin(512);
-
-  // MQTT
-  connectToMqtt();
-
+  // LCD
   lcd.init();
   lcd.backlight();
-
-  servoMotor.attach(SERVO_PIN);  // attaches the servo on ESP32 pin
-  servoMotor.write(90);
+  // Servo
+  servoMotor.attach(SERVO_PIN);
+  servoMotor.write(100);
+  // Wifi Manager
   WiFiManager wm;
   bool res;
 
@@ -307,10 +314,13 @@ void setup() {
   // Alamat 1: MODE
   // Alamat 2: JAM-1
   // Alamat 3: JAM-2
-  writeToEEPROM(1, "MANUAL");
-  writeToEEPROM(10, "12:2");
-  writeToEEPROM(20, "15:00");
-  writeToEEPROM(80, "true");
+
+  mode = readFromEEPROM(1);
+  jam1 = readFromEEPROM(10);
+  jam2 = readFromEEPROM(20);
+  dataId = readFromEEPROM(50);
+  dataPin = readFromEEPROM(70);
+  StatusAlat = readFromEEPROM(80);
 
   Serial.print("MODE: ");
   Serial.println(readFromEEPROM(1));
@@ -344,15 +354,10 @@ void setup() {
     //  set
   }
   Serial.println("Waiting Data");
-  // if (!client.connected()) {
-  //   reconnect();
-  // }
 
   Serial.print("Status EEPROM: ");
   // // float TestAddress;
   // // EEPROM.get(0, TestAddress);
-  dataId = readFromEEPROM(50);
-  dataPin = readFromEEPROM(70);
 
   if (dataId == "" || dataPin == "") {
     Serial.print("EEPROM Kosong");
@@ -361,34 +366,51 @@ void setup() {
 
   else {
     Serial.println("EEPROM isi");
-    dataId = readFromEEPROM(50);
-    dataPin = readFromEEPROM(70);
     Serial.print("Isi EEPROM Adalah = ");
-    Serial.print(dataId);
+    Serial.println(dataId);
     Serial.println(dataPin);
   }
+  // MQTT
+  connectToMqtt();
 }
 
 void loop() {
-  // String data = "xKY3p7#32#70#false#false";
-  // String data = ("xKY3p7#", dataIN, "#", isLampAvailable);
-  // client.publish("PNJ/xKY3p7/TERRA", data.c_str());
-  // Serial.print("Data: ");
-  // Serial.println(data);
+  String data = dataId + "#" + dataIN + "#" + isLampAvailable;
+  Serial.println(data);
+  const char* msgchar = data.c_str();
   serial();
   lampu();
   pakan();
   LCD();
+
   if (!mqttClient.connected()) {
     connectToMqtt();
   }
-
   mqttClient.loop();
-  delay(1000);
+
+  long now = millis();
+  if (now - lastmsg > 1000) {
+    lastmsg = now;
+    snprintf(msg, 75, "%s", msgchar);
+    Serial.println("Publish Message: ");
+    Serial.println(msgchar);
+    String TopicPublishToServer = "TERRARIUM/PUBLISH/" + dataId;
+    const char* TopicPublishToServer_CHR = TopicPublishToServer.c_str();
+    if (StatusAlat == "true") {
+      mqttClient.publish(TopicPublishToServer_CHR, msgchar);
+    }
+    // delete[] data;)
+  }
 }
 
 // function connect to MQTT with PubSubClient Library
 void connectToMqtt() {
+  String TopicSchedule = "TERRARIUM/SCHEDULE/" + dataId;
+  String TopicStatusPair = "TERRARIUM/STATUS/" + dataId;
+  String TopicPublishToServer = "TERRARIUM/PUBLISH/" + dataId;
+  const char* TopicSchedule_CHR = TopicSchedule.c_str();
+  const char* TopicStatusPair_CHR = TopicStatusPair.c_str();
+  const char* TopicPublishToServer_CHR = TopicPublishToServer.c_str();
   mqttClient.setServer(mqttServer, mqttPort);
   mqttClient.setCallback(callback);
   while (!mqttClient.connected()) {
@@ -398,7 +420,9 @@ void connectToMqtt() {
       Serial.println("Connected to PubSubClient MQTT broker");
 
       // Subscribe to the desired topic
-      mqttClient.subscribe(TopicSchedule);
+      mqttClient.subscribe(TopicSchedule_CHR);
+      mqttClient.subscribe(TopicStatusPair_CHR);
+
     } else {
       Serial.print("Failed to connect to MQTT broker, state: ");
       Serial.println(mqttClient.state());
@@ -410,12 +434,39 @@ void connectToMqtt() {
 // callback function to retrive payload from MQTT
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.println("Message arrived in topic: " + String(topic));
+  String SubsKontrol = "";
 
-  Serial.print("Message: ");
+  // Serial.print("Message: ");
   for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
+    SubsKontrol += (char)payload[i];
+    // Serial.print((char)payload[i]);
   }
+  String TopicSchedule = "TERRARIUM/SCHEDULE/" + dataId;
+  String TopicStatusPair = "TERRARIUM/STATUS/" + dataId;
+  String TopicPublishToServer = "TERRARIUM/PUBLISH/" + dataId;
+
+  if (TopicSchedule == topic) {
+    Serial.print("Perintah Masuk: ");
+    Serial.println(SubsKontrol);
+    String JamPakan1 = stringSpliter(SubsKontrol, '#', 0);
+    String JamPakan2 = stringSpliter(SubsKontrol, '#', 1);
+    String StatusMode = stringSpliter(SubsKontrol, '#', 2);
+    mode = StatusMode;
+    Serial.printf("Status Makan : %s\n", StatusMode);
+    writeToEEPROM(1, mode);
+    jam1 = JamPakan1;
+    Serial.printf("Jam 1 : %s\n", JamPakan1);
+    jam2 = JamPakan2;
+    writeToEEPROM(10, jam1);
+    Serial.printf("Jam 2 : %s\n", JamPakan2);
+    writeToEEPROM(20, jam2);
+  }
+  if (TopicStatusPair == topic) {
+    String StatusPair = SubsKontrol;
+    StatusAlat = StatusPair;
+    writeToEEPROM(80, StatusAlat);
+  }
+
   Serial.println();
   Serial.println("-----------------------");
 }
-//}
